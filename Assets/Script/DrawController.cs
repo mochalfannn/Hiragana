@@ -1,10 +1,11 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 
 public class DrawController : MonoBehaviour
 {
     public RawImage drawArea;
-    public int textureSize = 1024;
+    public int textureSize = 256;
+    public int brushSize = 16; 
 
     private Texture2D drawTex;
     private bool drawing = false;
@@ -12,7 +13,15 @@ public class DrawController : MonoBehaviour
 
     void Start()
     {
+        if (drawArea == null)
+        {
+            Debug.LogError("DrawArea belum di assign!");
+            return;
+        }
+
         drawTex = new Texture2D(textureSize, textureSize, TextureFormat.RGBA32, false);
+        drawTex.filterMode = FilterMode.Point;
+
         ClearTexture();
         drawArea.texture = drawTex;
     }
@@ -25,32 +34,41 @@ public class DrawController : MonoBehaviour
 #endif
     }
 
-    // -------------------------------------------------------------------
-    // CONVERT SCREEN TO TEXTURE COORD
-    // -------------------------------------------------------------------
+    public void ClearCanvas()
+    {
+        drawing = false;
+        ClearTexture();
+    }
+
+    // =========================================================
+    // 🔥 KONVERSI KOORDINAT
+    // =========================================================
     bool GetTextureCoord(Vector2 screenPos, out int tx, out int ty)
     {
         tx = ty = 0;
 
         Vector2 local;
         if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
-            drawArea.rectTransform, screenPos, null, out local)) return false;
+            drawArea.rectTransform, screenPos, null, out local))
+            return false;
 
         Rect r = drawArea.rectTransform.rect;
 
         float px = (local.x - r.x) / r.width;
         float py = (local.y - r.y) / r.height;
 
-        if (px < 0 || px > 1 || py < 0 || py > 1) return false;
+        if (px < 0 || px > 1 || py < 0 || py > 1)
+            return false;
 
         tx = Mathf.Clamp((int)(px * textureSize), 0, textureSize - 1);
         ty = Mathf.Clamp((int)(py * textureSize), 0, textureSize - 1);
+
         return true;
     }
 
-    // -------------------------------------------------------------------
-    // TOUCH HANDLING
-    // -------------------------------------------------------------------
+    // =========================================================
+    // TOUCH INPUT
+    // =========================================================
     void HandleTouch()
     {
         if (Input.touchCount == 0) return;
@@ -66,7 +84,7 @@ public class DrawController : MonoBehaviour
             }
             else if (t.phase == TouchPhase.Moved && drawing)
             {
-                DrawLine((int)prevPos.x, (int)prevPos.y, x, y, 8);
+                DrawLineSmooth((int)prevPos.x, (int)prevPos.y, x, y);
                 prevPos = new Vector2(x, y);
                 drawTex.Apply();
             }
@@ -77,9 +95,9 @@ public class DrawController : MonoBehaviour
         }
     }
 
-    // -------------------------------------------------------------------
-    // MOUSE HANDLING (EDITOR)
-    // -------------------------------------------------------------------
+    // =========================================================
+    // MOUSE INPUT
+    // =========================================================
     void HandleMouse()
     {
         Vector2 mp = Input.mousePosition;
@@ -102,50 +120,65 @@ public class DrawController : MonoBehaviour
         {
             if (GetTextureCoord(mp, out int x, out int y))
             {
-                DrawLine((int)prevPos.x, (int)prevPos.y, x, y, 8);
+                DrawLineSmooth((int)prevPos.x, (int)prevPos.y, x, y);
                 prevPos = new Vector2(x, y);
                 drawTex.Apply();
             }
         }
     }
 
-    // -------------------------------------------------------------------
-    // DRAW LINE (Bresenham + brush width)
-    // -------------------------------------------------------------------
-    void DrawLine(int x0, int y0, int x1, int y1, int width)
+    // =========================================================
+    // 🔥 LINE SMOOTH (ANTI PUTUS-PUTUS)
+    // =========================================================
+    void DrawLineSmooth(int x0, int y0, int x1, int y1)
     {
-        int dx = Mathf.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-        int dy = Mathf.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-        int err = (dx > dy ? dx : -dy) / 2, e2;
+        float dist = Vector2.Distance(new Vector2(x0, y0), new Vector2(x1, y1));
+        int steps = Mathf.CeilToInt(dist);
 
-        while (true)
+        for (int i = 0; i <= steps; i++)
         {
-            for (int wx = -width / 2; wx <= width / 2; wx++)
-            {
-                for (int wy = -width / 2; wy <= width / 2; wy++)
-                {
-                    int px = x0 + wx;
-                    int py = y0 + wy;
+            float t = i / (float)steps;
+            int x = Mathf.RoundToInt(Mathf.Lerp(x0, x1, t));
+            int y = Mathf.RoundToInt(Mathf.Lerp(y0, y1, t));
 
-                    if (px >= 0 && px < textureSize && py >= 0 && py < textureSize)
-                        drawTex.SetPixel(px, py, Color.black);
-                }
-            }
-
-            if (x0 == x1 && y0 == y1) break;
-
-            e2 = err;
-            if (e2 > -dx) { err -= dy; x0 += sx; }
-            if (e2 < dy) { err += dx; y0 += sy; }
+            DrawBrushCircle(x, y, brushSize);
         }
     }
 
-    // -------------------------------------------------------------------
+    // =========================================================
+    // 🔥 BRUSH BULAT (LEBIH NATURAL)
+    // =========================================================
+    void DrawBrushCircle(int cx, int cy, int size)
+    {
+        int r = size / 2;
+
+        for (int x = -r; x <= r; x++)
+        {
+            for (int y = -r; y <= r; y++)
+            {
+                if (x * x + y * y <= r * r)
+                {
+                    int px = cx + x;
+                    int py = cy + y;
+
+                    if (px >= 0 && px < textureSize && py >= 0 && py < textureSize)
+                    {
+                        drawTex.SetPixel(px, py, Color.white);
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================
+    // CLEAR
+    // =========================================================
     public void ClearTexture()
     {
         Color32[] cols = new Color32[textureSize * textureSize];
+
         for (int i = 0; i < cols.Length; i++)
-            cols[i] = new Color32(255, 255, 255, 255);
+            cols[i] = new Color32(0, 0, 0, 255);
 
         drawTex.SetPixels32(cols);
         drawTex.Apply();
@@ -154,5 +187,19 @@ public class DrawController : MonoBehaviour
     public Texture2D GetDrawTexture()
     {
         return drawTex;
+    }
+
+    // =========================================================
+    // 🔥 SAVE TEXTURE TO FILE
+    // =========================================================
+    public string SaveTextureToFile()
+    {
+        string path = Application.streamingAssetsPath + "/drawn_image.png";
+
+        byte[] bytes = drawTex.EncodeToPNG();
+        System.IO.File.WriteAllBytes(path, bytes);
+
+        Debug.Log("Image saved to: " + path);
+        return path;
     }
 }
